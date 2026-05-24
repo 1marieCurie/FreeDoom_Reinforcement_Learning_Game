@@ -322,19 +322,9 @@ Open and run `arnoldv2.ipynb` in Jupyter. The notebook contains the full Dueling
 
 ## Demo
 
-### PPO Agent in Action
 
-> 📸 *Place a screenshot or GIF of the PPO agent playing here*
+![Demo](image.png)
 
-![PPO Agent Demo](demo/ppo_demo.png)
-
----
-
-### Arnold (Dueling DRQN) in Action
-
-> 📸 *Place a screenshot or GIF of Arnold playing here*
-
-![Arnold Demo](demo/arnold_demo.png)
 
 ---
 
