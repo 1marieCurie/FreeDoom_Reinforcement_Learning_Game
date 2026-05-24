@@ -8,23 +8,6 @@
 
 ---
 
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Agents](#agents)
-- [Project Structure](#project-structure)
-- [Setup — Scenario Files & Pretrained Model](#️-setup--scenario-files--pretrained-model)
-- [Environment Design — PPO Agent](#environment-design--ppo-agent)
-- [Environment Design — Arnold (Dueling DRQN)](#environment-design--arnold-dueling-drqn)
-- [Reward Functions](#reward-functions)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Results](#results)
-- [Limitations](#limitations)
-- [References](#references)
-- [Demo](#demo)
-
----
 
 ## Overview
 
@@ -54,28 +37,7 @@ Uses a **Dueling Double Deep Recurrent Q-Network** on the full deathmatch map. A
 
 ---
 
-## Project Structure
-
-```
-freedoom/
-│
-├── ppo_approach/
-│   ├── doom_env.py              # Gymnasium wrapper for VizDoom (DoomEnv class)
-│   ├── train.py                 # PPO training script (Stable-Baselines3)
-│   ├── test.py                  # PPO evaluation script (10 test episodes)
-│   ├── deathmatch_mine.cfg      # VizDoom scenario configuration (copy to VizDoom scenarios/)
-│   ├── deathmatch_mine.wad      # VizDoom custom map file (copy to VizDoom scenarios/)
-│   ├── doom_ppo_v1_3.zip        # Final pretrained PPO model (Essai 4)
-│   ├── checkpoints/             # PPO model checkpoints (auto-created during training)
-│   └── ppo_doom_tensorboard/    # TensorBoard logs (auto-created during training)
-│
-└── arnold_approach/
-    └── arnoldv2.ipynb           # Arnold (Dueling DRQN) full training & evaluation notebook
-```
-
----
-
-## ⚙️ Setup — Scenario Files & Pretrained Model
+## Setup — Scenario Files & Pretrained Model
 
 ### VizDoom Scenario Files
 
@@ -265,28 +227,7 @@ This factored design allows simultaneous strafing and turning — standard Doom 
 
 Arnold extends standard DQN with three stacked components:
 
-```
-Input frames (108×60×4)
-        │
-  ┌─────▼──────┐
-  │  CNN Encoder│   ← shared visual feature extractor
-  └─────┬──────┘
-        │
-  ┌─────▼──────┐
-  │  LSTM Layer │   ← recurrent memory (enemy positions, shot trajectories)
-  └──────┬──────┘
-         │
-    ┌────┴────┐
-    │         │
-┌───▼───┐ ┌──▼──────────────┐
-│Dueling│ │ Game-Feature Head│
-│ Heads │ │ (binary visibility│
-│ V + A │ │  prediction)      │
-└───┬───┘ └─────────────────┘
-    │
-  Q(s,a)
-```
-
+![architecture](architecture.png)
 **Dueling streams** — The Q-value is decomposed into:
 ```
 Q(s, a) = V(s) + A(s, a) − mean_a'[A(s, a')]
@@ -420,16 +361,16 @@ Key metrics monitored during Arnold's training: `ep_reward`, `ep_kills`, `TD los
 
 | Episode | Reward | Kills | Steps | Outcome |
 |---|---|---|---|---|
-| 1 | 2.180 | 2 | 167 | ✅ Success |
-| 2 | −0.324 | 0 | 84 | ❌ Failure |
-| 3 | 2.180 | 2 | 167 | ✅ Success |
-| 4 | −0.617 | 0 | 107 | ❌ Failure |
-| 5 | −0.818 | 0 | 50 | ❌ Failure |
-| 6 | 2.145 | 2 | 154 | ✅ Success |
-| 7 | −0.004 | 0 | 168 | ❌ Failure |
-| 8 | 2.180 | 2 | 167 | ✅ Success |
-| 9 | −0.873 | 0 | 34 | ❌ Failure |
-| 10 | 2.180 | 2 | 167 | ✅ Success |
+| 1 | 2.180 | 2 | 167 | Success |
+| 2 | −0.324 | 0 | 84 | Failure |
+| 3 | 2.180 | 2 | 167 | Success |
+| 4 | −0.617 | 0 | 107 | Failure |
+| 5 | −0.818 | 0 | 50 | Failure |
+| 6 | 2.145 | 2 | 154 | Success |
+| 7 | −0.004 | 0 | 168 | Failure |
+| 8 | 2.180 | 2 | 167 | Success |
+| 9 | −0.873 | 0 | 34 | Failure |
+| 10 | 2.180 | 2 | 167 | Success |
 
 **Summary: 5/10 success rate · Mean reward = 0.623 · Mean episode length = 126.5 steps**
 
