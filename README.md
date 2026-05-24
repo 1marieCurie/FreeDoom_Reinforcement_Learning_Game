@@ -13,6 +13,7 @@
 - [Overview](#overview)
 - [Agents](#agents)
 - [Project Structure](#project-structure)
+- [Setup — Scenario Files & Pretrained Model](#️-setup--scenario-files--pretrained-model)
 - [Environment Design](#environment-design)
 - [Reward Functions](#reward-functions)
 - [Installation](#installation)
@@ -70,6 +71,68 @@ freedoom/
 │
 └── doom_ppo_v1_3.zip        # Final saved PPO model
 ```
+
+---
+
+## ⚙️ Setup — Scenario Files & Pretrained Model
+
+### VizDoom Scenario Files
+
+The PPO approach uses two custom scenario files that **must be manually copied** into
+VizDoom's local `scenarios/` folder before running any script:
+
+| File | Description |
+|---|---|
+| `deathmatch_mine.cfg` | VizDoom configuration (game variables, buttons, episode settings) |
+| `deathmatch_mine.wad` | Custom Doom map file |
+
+**How to install them:**
+
+1. Locate your VizDoom `scenarios/` folder. It typically lives at:
+
+```
+C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python312\Lib\site-packages\vizdoom\scenarios\
+```
+
+2. Copy both files there:
+
+```
+deathmatch_mine.cfg  →  .../vizdoom/scenarios/deathmatch_mine.cfg
+deathmatch_mine.wad  →  .../vizdoom/scenarios/deathmatch_mine.wad
+```
+
+3. No other configuration is needed — `doom_env.py` references these files by name and VizDoom will find them automatically.
+
+> ⚠️ If VizDoom raises a `FileNotFoundError` on `deathmatch_mine.cfg`, the files are not in the right folder. Double-check the path above for your Python version and username.
+
+---
+
+### Pretrained Model — Skip Training, Test Directly
+
+`doom_ppo_v1_3.zip` is the final trained PPO model (Essai 4 — the last and best iteration of the PPO approach). It can be loaded and tested **immediately** without running the training script (which takes ~14 hours).
+
+**To test the pretrained agent on 10 episodes:**
+
+```bash
+# Make sure doom_ppo_v1_3.zip is in the same directory as test.py
+python ppo_approach/test.py
+```
+
+This will open a visible game window and run 10 full episodes, printing step-level stats and a per-episode summary. The agent uses `deterministic=True` — it plays what it has genuinely learned, with no random exploration.
+
+**To train from scratch instead** (optional, ~14 hours):
+
+```bash
+python ppo_approach/train.py
+```
+
+This will overwrite `doom_ppo_v1_3.zip` with a freshly trained model and save intermediate checkpoints every 50 000 steps to `./checkpoints/`.
+
+| File | Purpose | Time |
+|---|---|---|
+| `doom_ppo_v1_3.zip` | Ready-to-use pretrained model | Instant load |
+| `ppo_approach/test.py` | Evaluate the agent (5 or 10 episodes) | ~5 minutes |
+| `ppo_approach/train.py` | Train from scratch | ~14 hours |
 
 ---
 
@@ -323,8 +386,9 @@ Open and run `arnoldv2.ipynb` in Jupyter. The notebook contains the full Dueling
 ## Demo
 
 
-![Demo](image.png)
+> 📸 *Place a screenshot or GIF of the PPO agent playing here*
 
+![Demo](image.png)
 
 ---
 
