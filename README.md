@@ -14,7 +14,8 @@
 - [Agents](#agents)
 - [Project Structure](#project-structure)
 - [Setup — Scenario Files & Pretrained Model](#️-setup--scenario-files--pretrained-model)
-- [Environment Design](#environment-design)
+- [Environment Design — PPO Agent](#environment-design--ppo-agent)
+- [Environment Design — Arnold (Dueling DRQN)](#environment-design--arnold-dueling-drqn)
 - [Reward Functions](#reward-functions)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -58,18 +59,18 @@ Uses a **Dueling Double Deep Recurrent Q-Network** on the full deathmatch map. A
 ```
 freedoom/
 │
-├── doom_env.py              # Gymnasium wrapper for VizDoom (DoomEnv class)
-├── train.py                 # PPO training script (Stable-Baselines3)
-├── test.py                  # PPO evaluation script (10 test episodes)
-├── arnoldv2.ipynb           # Arnold (Dueling DRQN) training notebook
+├── ppo_approach/
+│   ├── doom_env.py              # Gymnasium wrapper for VizDoom (DoomEnv class)
+│   ├── train.py                 # PPO training script (Stable-Baselines3)
+│   ├── test.py                  # PPO evaluation script (10 test episodes)
+│   ├── deathmatch_mine.cfg      # VizDoom scenario configuration (copy to VizDoom scenarios/)
+│   ├── deathmatch_mine.wad      # VizDoom custom map file (copy to VizDoom scenarios/)
+│   ├── doom_ppo_v1_3.zip        # Final pretrained PPO model (Essai 4)
+│   ├── checkpoints/             # PPO model checkpoints (auto-created during training)
+│   └── ppo_doom_tensorboard/    # TensorBoard logs (auto-created during training)
 │
-├── deathmatch_mine.cfg      # VizDoom scenario configuration (required)
-├── deathmatch_mine.wad      # VizDoom map file (required)
-│
-├── checkpoints/             # PPO model checkpoints (auto-created during training)
-├── ppo_doom_tensorboard/    # TensorBoard logs (auto-created during training)
-│
-└── doom_ppo_v1_3.zip        # Final saved PPO model
+└── arnold_approach/
+    └── arnoldv2.ipynb           # Arnold (Dueling DRQN) full training & evaluation notebook
 ```
 
 ---
@@ -136,7 +137,7 @@ This will overwrite `doom_ppo_v1_3.zip` with a freshly trained model and save in
 
 ---
 
-## Environment Design
+## Environment Design — PPO Agent
 
 ### VizDoom Configuration
 
@@ -145,6 +146,7 @@ This will overwrite `doom_ppo_v1_3.zip` with a freshly trained model and save in
 | Scenario | `deathmatch_mine.cfg` / `deathmatch_mine.wad` |
 | Difficulty | Skill level 3 (intermediate) |
 | Episode timeout | 4 200 game tics |
+| Number of bots | 2 |
 | Training resolution | 320×240 (HUD disabled) |
 | Inspection resolution | 640×480 |
 | Training mode | `ASYNC_PLAYER` |
@@ -161,6 +163,8 @@ Raw VizDoom screen buffers are preprocessed at every step:
 5. Cast to `uint8`
 
 Final observation space: `Box(0, 255, shape=(84, 84, 3), dtype=uint8)`
+
+> Terminal observations (agent death or zone violation) return a black frame of zeros.
 
 ### Action Space
 
@@ -181,18 +185,20 @@ Final observation space: `Box(0, 255, shape=(84, 84, 3), dtype=uint8)`
 
 Eight variables are tracked at each step:
 
-| Idx | Variable | Role |
-|---|---|---|
-| 0 | `KILLCOUNT` | Kill reward signal |
-| 1 | `HEALTH` | Damage & low-health penalty |
-| 2 | `ARMOR` | Reserved (unused) |
-| 3 | `SELECTED_WEAPON` | Reserved (unused) |
-| 4 | `S_WEAPON_AMMO` | Ammunition penalty |
-| 5 | `POSITION_X` | Spatial constraint |
-| 6 | `POSITION_Y` | Spatial constraint |
-| 7 | `DAMAGECOUNT` | Damage-received penalty (cumulative delta) |
+| Idx | Variable | Type | Role |
+|---|---|---|---|
+| 0 | `KILLCOUNT` | Int | Kill reward signal |
+| 1 | `HEALTH` | Int | Damage & low-health penalty |
+| 2 | `ARMOR` | Int | Reserved (unused) |
+| 3 | `SELECTED_WEAPON` | Int | Reserved (unused) |
+| 4 | `S_WEAPON_AMMO` | Int | Ammunition penalty |
+| 5 | `POSITION_X` | Float | Spatial constraint |
+| 6 | `POSITION_Y` | Float | Spatial constraint |
+| 7 | `DAMAGECOUNT` | Int | Damage-received penalty (cumulative delta) |
 
-### Spatial Constraint (PPO Agent)
+> **Important:** `DAMAGECOUNT` tracks cumulative damage *received* by the agent since episode start, not damage inflicted on enemies. The reward function uses the per-step delta `Δd = DAMAGECOUNT_t − DAMAGECOUNT_{t-1}`.
+
+### Spatial Constraint
 
 The episode terminates immediately with a −1.0 zone penalty if the agent exceeds 300 game units in either axis from its spawn point:
 
@@ -200,7 +206,96 @@ The episode terminates immediately with a −1.0 zone penalty if the agent excee
 |x_t − x_0| > 300  OR  |y_t − y_0| > 300  →  episode terminated
 ```
 
-This creates a pseudo 600×600 unit arena that prevents wandering and increases enemy encounter density during early training.
+This creates a pseudo 600×600 unit bounding box that prevents aimless wandering and increases enemy encounter density during early training.
+
+---
+
+## Environment Design — Arnold (Dueling DRQN)
+
+### VizDoom Configuration
+
+| Parameter | Value |
+|---|---|
+| Scenario | VizDoom deathmatch (full map) |
+| Number of bots | 4 |
+| Maps | 5 rotating maps |
+| Episode timeout | 2 100 game tics |
+| Spatial constraint | None — full map exploration |
+
+Arnold operates on an **unrestricted full deathmatch map**, relying on reward shaping (distance bonus, stale penalty) rather than hard spatial boundaries to encourage active exploration.
+
+### Observation Space
+
+| Parameter | Value |
+|---|---|
+| Resolution | 108×60 RGB |
+| Frame stack | 4 consecutive frames |
+| Frame skip | 4 game tics per action |
+| Final input shape | `(108, 60, 4)` |
+
+The 4-frame stack gives Arnold a short-term temporal window, while the LSTM layer (see Architecture below) extends memory further across the full episode.
+
+### Action Space
+
+Arnold uses a **factored action space** combining three independent sub-actions simultaneously, giving broader tactical coverage than the PPO agent's flat 8-action set:
+
+| Sub-action Group | Options |
+|---|---|
+| Turn + Move | Turn left, Turn right, Move forward, Move backward, No move |
+| Attack | Attack, No attack |
+| Strafe | Strafe left, Strafe right, No strafe |
+
+This factored design allows simultaneous strafing and turning — standard Doom combat mechanics not available in the PPO action set.
+
+### Training Configuration
+
+| Parameter | Value |
+|---|---|
+| Algorithm | Dueling DRQN (Double DQN + LSTM) |
+| Replay buffer | 100 000 transitions |
+| Batch size | 32 sequences |
+| Recurrent unrolls | 4 steps |
+| Learning rate | 2×10⁻⁴ (Adam) |
+| Target network update | Every 1 250 train steps (~5 000 env steps) |
+| ε-greedy schedule | 1.0 → 0.10 over first 500 000 env steps |
+| Discount γ | 0.99 |
+| Total training steps | 3 271 025 |
+
+### Architecture: Dueling DRQN with Game-Feature Head
+
+Arnold extends standard DQN with three stacked components:
+
+```
+Input frames (108×60×4)
+        │
+  ┌─────▼──────┐
+  │  CNN Encoder│   ← shared visual feature extractor
+  └─────┬──────┘
+        │
+  ┌─────▼──────┐
+  │  LSTM Layer │   ← recurrent memory (enemy positions, shot trajectories)
+  └──────┬──────┘
+         │
+    ┌────┴────┐
+    │         │
+┌───▼───┐ ┌──▼──────────────┐
+│Dueling│ │ Game-Feature Head│
+│ Heads │ │ (binary visibility│
+│ V + A │ │  prediction)      │
+└───┬───┘ └─────────────────┘
+    │
+  Q(s,a)
+```
+
+**Dueling streams** — The Q-value is decomposed into:
+```
+Q(s, a) = V(s) + A(s, a) − mean_a'[A(s, a')]
+```
+This improves value estimates in states where action choice has little impact (e.g., navigating between encounters).
+
+**LSTM layer** — Replaces fully-connected layers with an LSTM that processes sequences of frame-stacked observations, enabling the agent to track enemy positions and anticipate shots beyond what a fixed 4-frame stack can encode. This is critical in VizDoom's partially observable setting where enemies can leave the field of view.
+
+**Auxiliary game-feature head** — Branches off the shared LSTM hidden state to predict binary visibility indicators (is an enemy currently visible?). Inspired by [Lample & Chaplot, 2016], this head acts as a perceptual regularizer, forcing the visual encoder to learn semantically meaningful scene representations beyond pure Q-value optimization. The game-feature loss converges independently of the TD loss, confirming the two objectives do not interfere.
 
 ---
 
@@ -237,7 +332,7 @@ r_t = r_kill + r_death + r_dist + r_stale + r_health
 | Stale penalty | −0.1/step | Discourage standing still |
 | Health pickup | +1 | Reward self-preservation |
 
-> Kill–reward Pearson correlation r = **0.984**, confirming the reward is well-aligned with the primary objective.
+> The kill bonus is set to +30 (vs +1 for PPO) to reflect the denser, longer episodes of the full deathmatch setting. Kill–reward Pearson correlation r = **0.984**, confirming the reward is well-aligned with the primary objective.
 
 ---
 
@@ -246,7 +341,7 @@ r_t = r_kill + r_death + r_dist + r_stale + r_health
 ### Prerequisites
 
 - Python 3.8+
-- VizDoom (with `deathmatch_mine.cfg` and `.wad` scenario files)
+- VizDoom (see [Setup](#️-setup--scenario-files--pretrained-model) for scenario file installation)
 - CUDA-capable GPU recommended for training
 
 ### Install Dependencies
@@ -255,7 +350,7 @@ r_t = r_kill + r_death + r_dist + r_stale + r_health
 pip install vizdoom gymnasium stable-baselines3 opencv-python numpy torch tensorboard
 ```
 
-> For Arnold (Dueling DRQN), additional dependencies used in the notebook may be required.
+> For Arnold (Dueling DRQN), additional dependencies used in `arnoldv2.ipynb` may be required (e.g. `jupyter`).
 
 ---
 
@@ -264,7 +359,7 @@ pip install vizdoom gymnasium stable-baselines3 opencv-python numpy torch tensor
 ### Training the PPO Agent
 
 ```bash
-python train.py
+python ppo_approach/train.py
 ```
 
 This will:
@@ -285,23 +380,27 @@ This will:
 | gamma | 0.99 |
 | Total timesteps | 300 000 |
 
-### Monitoring Training
+### Monitoring PPO Training
 
 ```bash
 tensorboard --logdir ./ppo_doom_tensorboard/
 ```
 
+Key metrics to watch: `rollout/ep_len_mean`, `rollout/ep_rew_mean`, `train/approx_kl`, `train/clip_fraction`.
+
 ### Testing the PPO Agent
 
 ```bash
-python test.py
+python ppo_approach/test.py
 ```
 
-Runs 10 evaluation episodes with `deterministic=True` and renders a visible window. Prints step-level stats every 50 steps and a summary at the end of each episode.
+Runs 10 evaluation episodes with `deterministic=True` and renders a visible game window. Prints step-level stats every 50 steps and a full reward breakdown at the end of each episode.
 
 ### Training Arnold (Dueling DRQN)
 
-Open and run `arnoldv2.ipynb` in Jupyter. The notebook contains the full Dueling DRQN implementation, training loop, and evaluation code.
+Open and run `arnold_approach/arnoldv2.ipynb` in Jupyter. The notebook contains the full Dueling DRQN implementation, training loop, evaluation code, and loss/reward plotting.
+
+Key metrics monitored during Arnold's training: `ep_reward`, `ep_kills`, `TD loss`, `GF loss` (game-feature head), `mean Q-value`, `K/D ratio`.
 
 ---
 
@@ -334,39 +433,55 @@ Open and run `arnoldv2.ipynb` in Jupyter. The notebook contains the full Dueling
 
 **Summary: 5/10 success rate · Mean reward = 0.623 · Mean episode length = 126.5 steps**
 
+### PPO Training Experiments Summary
+
+| Experiment | Key Change | Outcome |
+|---|---|---|
+| Essai 1 | 5-action baseline, no health/ammo tracking | Proof-of-concept |
+| Essai 2 (`doom_ppo_v1_1`) | Fixed `DAMAGECOUNT` as penalty (not bonus) | ~100k steps, unstable (ep_len 70–85) |
+| Essai 3 (`doom_ppo_v1_2`) | Kill reward +50, survival bonus, time penalty | 1M steps / ~38h; degradation at 550k steps |
+| Essai 4 (`doom_ppo_v1_3`) | Kill reward normalized to +1.0, ammo penalty, health tracking | **Final model — 50% success rate** |
+
 ### Arnold (Dueling DRQN) — Final Performance
 
 | Metric | Value |
 |---|---|
 | Total training steps | 3 271 025 |
+| Total episodes | 6 215 |
 | Mean episode kills | **16.83** |
 | Peak episode kills | **43** |
 | Mean K/D ratio | **10.68** |
 | % episodes with K/D > 1 | 86.8% |
+| Greedy eval kills (final checkpoint) | **5.4 / episode** |
 | Greedy eval K/D (final) | **5.40** |
 | Mean episode reward | 503.0 |
 | Peak episode reward | 1 307.3 |
 | Mean TD loss | 0.2384 |
+| Mean GF loss | 0.1915 |
+| Peak mean Q-value | 24.07 |
+| Final mean Q-value | 20.07 |
 | Reward–kill correlation | **r = 0.984** |
 
-### PPO Training Experiments Summary
+**Phase-by-phase kill statistics (3.27M steps divided into 4 equal quartiles):**
 
-| Experiment | Key Change | Outcome |
-|---|---|---|
-| Essai 1 | 5-action baseline, no health/ammo | Proof-of-concept |
-| Essai 2 (`doom_ppo_v1_1`) | Fixed `DAMAGECOUNT` as penalty (not bonus) | ~100k steps, unstable (ep_len 70–85) |
-| Essai 3 (`doom_ppo_v1_2`) | Kill reward +50, survival bonus, time penalty | 1M steps / ~38h; degradation at 550k steps |
-| Essai 4 (`doom_ppo_v1_3`) | Kill reward normalized to +1.0, ammo penalty, health tracking | **Final model — 50% success rate** |
+| Phase | Steps | Mean Kills | Std | Max |
+|---|---|---|---|---|
+| Phase 1 | 0 – 0.82M | 16.81 | 6.55 | 43 |
+| Phase 2 | 0.82 – 1.63M | 17.32 | 6.44 | 43 |
+| Phase 3 | 1.63 – 2.45M | 16.07 | 5.50 | 38 |
+| Phase 4 | 2.45 – 3.27M | 17.11 | 5.84 | 42 |
+
+Mean kills remain stable across all phases while standard deviation narrows, confirming policy stabilization without catastrophic forgetting.
 
 ---
 
 ## Limitations
 
-- **No outgoing damage signal** — VizDoom's default config does not expose damage inflicted on enemies; only kill events provide combat feedback. Custom ACS scripting would be needed.
-- **Spatial constraint approximation** — The 300-unit bound is a rough proxy; a curriculum approach expanding the zone as skill improves would be more principled.
-- **Insufficient training budget** — PPO clipping fraction never fell below 0.40, confirming the policy had not converged at 300k steps. Extending to 1M–5M steps is recommended.
-- **Single-seed evaluation** — All runs used one random seed; multi-seed experiments with statistical significance tests are needed for robust conclusions.
-- **Limited action space** — The 8 macro-actions omit strafing-while-turning and crouching; Arnold's factored action space handles this more flexibly.
+- **No outgoing damage signal** — VizDoom's default config does not expose damage inflicted on enemies; only kill events provide combat feedback. Custom ACS scripting in the WAD file would be needed for a richer intermediate signal.
+- **Spatial constraint approximation** — The PPO agent's 300-unit bound is a rough proxy; a curriculum approach gradually expanding the accessible zone as skill improves would be more principled.
+- **Insufficient training budget** — PPO clipping fraction never fell below 0.40, confirming the policy had not converged at 300k steps. Extending to 1M–5M steps is recommended. Arnold also appears to have reached a local behavioral plateau rather than a true optimum; 10M–20M steps may be needed.
+- **Single-seed evaluation** — All training runs used one random seed; multi-seed experiments with statistical significance tests are needed for robust conclusions.
+- **Limited PPO action space** — The 8 macro-actions omit strafing-while-turning and crouching; Arnold's factored action space handles this more flexibly.
 
 ---
 
@@ -386,9 +501,8 @@ Open and run `arnoldv2.ipynb` in Jupyter. The notebook contains the full Dueling
 ## Demo
 
 
-> 📸 *Place a screenshot or GIF of the PPO agent playing here*
-
 ![Demo](image.png)
+
 
 ---
 
